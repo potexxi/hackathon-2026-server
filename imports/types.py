@@ -10,6 +10,6 @@ class OSMColumns:
 
     @classmethod
     def ALL_String(cls):
-        return f"{cls.ID}, {cls.NAME}, {cls.TYP}, {cls.TRINKBAR}, {cls.LAT}, {cls.LON}, {cls.GEOM}"
+        return f"{cls.ID}, {cls.NAME}, {cls.TYP}, {cls.TRINKBAR}, {cls.LAT}, {cls.LON}"
 
-    ALL_LIST = [ID, NAME, TYP, TRINKBAR, LAT, LON, GEOM, DIST]
+    ALL_LIST = [ID, NAME, TYP, TRINKBAR, LAT, LON, DIST]

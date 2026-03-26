@@ -4,16 +4,13 @@ import logging
 from imports.types import OSMColumns
 import os
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s - %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
-    handlers=[
-        logging.StreamHandler(),  # Konsole
-        logging.FileHandler("osm_water.log", encoding="utf-8")  # Datei
-    ]
-)
-logger = logging.getLogger("OSMWaterManager")
+
+def get_relativ_path(path: str):
+    base_path = os.path.dirname(os.path.abspath(__file__))
+    return os.path.normpath(os.path.join(base_path, path))
+
+
+logger = logging.getLogger(__name__)
 
 
 class OSMWaterManager:
@@ -79,7 +76,7 @@ class OSMWaterManager:
         conn.close()
         logger.info(f"Datenbank '{self.db_path}' erfolgreich erstellt")
 
-    def find_nearby(self, lat: float, lon: float, radius_m: int = 5000) -> pd.DataFrame:
+    def find_nearby(self, lat: float, lon: float, radius_m: int = 5000, amount=20) -> pd.DataFrame:
         """Sucht im Umkreis und gibt ein DataFrame mit Distanz zurück."""
         logger.info(f"Suche Wasserstellen – lat={lat}, lon={lon}, radius={radius_m}m")
         self._connect()
@@ -95,6 +92,7 @@ class OSMWaterManager:
                 {radius_m}
             )
             ORDER BY ST_Distance_Spheroid({OSMColumns.GEOM}, ST_Point({lon}, {lat})) ASC
+            LIMIT 20
         """
 
         ergebnisse = self.con.execute(search_query).df()
@@ -104,4 +102,4 @@ class OSMWaterManager:
 #  Potentieller ablauf
 # manager = OSMWaterManager("wasser_austria.db")
 # manager.create_from_pbf("./austria-260325.osm.pbf") # Nur 1 mal runnen
-# ergebnisse = manager.find_nearby(lat=48.2084, lon=16.3731, radius_m=1000)
+# ergebnisse = manager.find_nearby(lat=48.2084, lon=16.3731, ammount=20, radius_m=1000)
