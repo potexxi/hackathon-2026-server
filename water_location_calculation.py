@@ -43,13 +43,14 @@ class OSMWaterManager:
 
         # Wir nutzen deine CASE-Logik und Spaltennamen aus OSMColumns
         # Wichtig: ST_Point(lon, lat) wird direkt für den Index erstellt
+        # In deiner create_from_pbf Methode:
         create_query = f"""
             CREATE OR REPLACE TABLE wasserstellen AS 
             SELECT 
                 id AS {OSMColumns.ID},
                 lat AS {OSMColumns.LAT},
                 lon AS {OSMColumns.LON},
-                COALESCE(CAST(tags['name'] AS VARCHAR), 'Unbekannte Quelle') as {OSMColumns.NAME},
+                COALESCE(CAST(tags['name'] AS VARCHAR), 'Unbekannte Quelle') AS {OSMColumns.NAME},
                 CASE 
                     WHEN CAST(tags['amenity'] AS VARCHAR) = 'drinking_water' THEN 'Trinkwasserbrunnen'
                     WHEN CAST(tags['natural'] AS VARCHAR) = 'spring'         THEN 'Quelle'
@@ -60,10 +61,9 @@ class OSMWaterManager:
                     WHEN CAST(tags['man_made'] AS VARCHAR) = 'water_tap'     THEN 'Wasserhahn'
                     WHEN CAST(tags['man_made'] AS VARCHAR) = 'pump'          THEN 'Pumpe'
                     ELSE 'Sonstige Wasserquelle'
-                END as {OSMColumns.TYP},
-                CAST(tags['drinking_water'] AS VARCHAR) as {OSMColumns.TRINKBAR},
-                tags AS {OSMColumns.TAGS},
-                ST_Point(lon, lat) as {OSMColumns.GEOM}
+                END AS {OSMColumns.TYP},
+                CAST(tags['drinking_water'] AS VARCHAR) AS {OSMColumns.TRINKBAR},
+                ST_Point(lon, lat) AS {OSMColumns.GEOM}
             FROM ST_ReadOSM('{pbf_path}')
             WHERE 
                 CAST(tags['amenity'] AS VARCHAR) IN ('drinking_water', 'water_point', 'fountain', 'watering_place') OR
@@ -84,15 +84,11 @@ class OSMWaterManager:
 
         # Nutzt den R-Tree Index für maximale Geschwindigkeit
         # ST_Distance_Spheroid berechnet die Entfernung in Metern auf der Erdkugel
+        # In deiner find_nearby Methode:
         search_query = f"""
             SELECT 
-                {OSMColumns.ID}, 
-                {OSMColumns.NAME}, 
-                {OSMColumns.TYP}, 
-                {OSMColumns.TRINKBAR},
-                {OSMColumns.LAT}, 
-                {OSMColumns.LON},
-                round(ST_Distance_Spheroid({OSMColumns.GEOM}, ST_Point({lon}, {lat}))) as {OSMColumns.DIST}
+                {OSMColumns.ALL_String()},
+                round(ST_Distance_Spheroid({OSMColumns.GEOM}, ST_Point({lon}, {lat}))) AS {OSMColumns.DIST}
             FROM wasserstellen
             WHERE ST_DWithin(
                 ST_Transform({OSMColumns.GEOM}, 'EPSG:4326', 'EPSG:3857'), 
@@ -103,6 +99,7 @@ class OSMWaterManager:
         """
         return self.con.execute(search_query).df()
 
+
 manager = OSMWaterManager("wasser_austria.db")
 manager.create_from_pbf("./austria-260325.osm.pbf")
 
@@ -111,4 +108,7 @@ ergebnisse = manager.find_nearby(lat=48.2084, lon=16.3731, radius_m=1000)
 
 # Anzeige mit deinen OSMColumns (Autocompletion-Safe)
 pd.set_option('display.max_rows', None)
-print(ergebnisse[[OSMColumns.ALL]])
+pd.set_option('display.max_columns', None)
+pd.set_option('display.width', None)
+pd.set_option('display.max_colwidth', None)
+print(ergebnisse[OSMColumns.ALL_LIST])

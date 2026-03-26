@@ -1,7 +1,4 @@
-from enum import Enum
-
-
-class OSMColumns(Enum):
+class OSMColumns:
     ID = 'id'
     NAME = 'name'
     TYP = 'wasser_typ'
@@ -9,9 +6,10 @@ class OSMColumns(Enum):
     LAT = 'lat'
     LON = 'lon'
     GEOM = 'geom'
-    TAGS = 'tags'
     DIST = 'distanz_meter'
 
     @classmethod
-    def ALL(cls):
-        return [c.value for c in cls]
+    def ALL_String(cls):
+        return f"{cls.ID}, {cls.NAME}, {cls.TYP}, {cls.TRINKBAR}, {cls.LAT}, {cls.LON}, {cls.GEOM}"
+
+    ALL_LIST = [ID, NAME, TYP, TRINKBAR, LAT, LON, GEOM, DIST]
