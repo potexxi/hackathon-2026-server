@@ -76,7 +76,7 @@ class OSMWaterManager:
         conn.close()
         logger.info(f"Datenbank '{self.db_path}' erfolgreich erstellt")
 
-    def find_nearby(self, lat: float, lon: float, radius_m: int = 5000, amount=20) -> pd.DataFrame:
+    def find_nearby(self, lat: float, lon: float, radius_m: int = 5000, amount=200) -> pd.DataFrame:
         """Sucht im Umkreis und gibt ein DataFrame mit Distanz zurück."""
         logger.info(f"Suche Wasserstellen – lat={lat}, lon={lon}, radius={radius_m}m")
         self._connect()
@@ -92,7 +92,7 @@ class OSMWaterManager:
                 {radius_m}
             )
             ORDER BY ST_Distance_Spheroid({OSMColumns.GEOM}, ST_Point({lon}, {lat})) ASC
-            LIMIT 20
+            LIMIT {amount}
         """
 
         ergebnisse = self.con.execute(search_query).df()
