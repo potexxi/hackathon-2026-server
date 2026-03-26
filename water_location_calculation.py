@@ -1,18 +1,19 @@
 import duckdb
 import pandas as pd
+import logging
 from imports.types import OSMColumns
 import os
 
-# API: https://www.openstreetmap.org
-
-con = duckdb.connect(":memory:")
-con.execute("INSTALL spatial; LOAD spatial;")
-
-wasser_filter = """
-    (tags->'amenity' IN ('drinking_water', 'water_point', 'fountain', 'watering_place')) OR
-    (tags->'natural' IN ('spring')) OR
-    (tags->'man_made' IN ('water_well', 'water_tap', 'pump'))
-"""
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s - %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+    handlers=[
+        logging.StreamHandler(),  # Konsole
+        logging.FileHandler("osm_water.log", encoding="utf-8")  # Datei
+    ]
+)
+logger = logging.getLogger("OSMWaterManager")
 
 
 class OSMWaterManager:
@@ -24,26 +25,25 @@ class OSMWaterManager:
         """
         self.db_path = db_path
         self.con = None
+        logger.info(f"OSMWaterManager initialisiert mit Datenbank: {db_path}")
 
     def _connect(self):
         """Connect to the database"""
+        logger.debug(f"Verbinde mit Datenbank: {self.db_path}")
         self.con = duckdb.connect(self.db_path)
         self.con.execute("INSTALL spatial; LOAD spatial;")
+        logger.info("Datenbankverbindung erfolgreich hergestellt")
 
     def create_from_pbf(self, pbf_path: str, force: bool = False):
         """Erstellt die optimierte .db Datei mit deinem spezifischen Wasser-Filter."""
         if os.path.exists(self.db_path) and not force:
-            print(f"--- Info: {self.db_path} existiert bereits. Überspringe Import. ---")
+            logger.info(f"{self.db_path} existiert bereits – Import übersprungen (force=False)")
             return
 
-        print(f"--- Starte Import von {pbf_path} ---")
-        # Verbindung für den Import öffnen
+        logger.info(f"Starte Import von: {pbf_path}")
         conn = duckdb.connect(self.db_path)
         conn.execute("INSTALL spatial; LOAD spatial;")
 
-        # Wir nutzen deine CASE-Logik und Spaltennamen aus OSMColumns
-        # Wichtig: ST_Point(lon, lat) wird direkt für den Index erstellt
-        # In deiner create_from_pbf Methode:
         create_query = f"""
             CREATE OR REPLACE TABLE wasserstellen AS 
             SELECT 
@@ -71,20 +71,19 @@ class OSMWaterManager:
                 CAST(tags['man_made'] AS VARCHAR) IN ('water_well', 'water_tap', 'pump')
         """
 
+        logger.info("Führe CREATE TABLE aus...")
         conn.execute(create_query)
 
-        print("--- Erstelle räumlichen Index ---")
+        logger.info("Erstelle räumlichen R-Tree Index...")
         conn.execute(f"CREATE INDEX IF NOT EXISTS spatial_idx ON wasserstellen USING RTREE ({OSMColumns.GEOM});")
         conn.close()
-        print(f"--- Datenbank {self.db_path} erfolgreich erstellt! ---")
+        logger.info(f"Datenbank '{self.db_path}' erfolgreich erstellt")
 
     def find_nearby(self, lat: float, lon: float, radius_m: int = 5000) -> pd.DataFrame:
         """Sucht im Umkreis und gibt ein DataFrame mit Distanz zurück."""
+        logger.info(f"Suche Wasserstellen – lat={lat}, lon={lon}, radius={radius_m}m")
         self._connect()
 
-        # Nutzt den R-Tree Index für maximale Geschwindigkeit
-        # ST_Distance_Spheroid berechnet die Entfernung in Metern auf der Erdkugel
-        # In deiner find_nearby Methode:
         search_query = f"""
             SELECT 
                 {OSMColumns.ALL_String()},
@@ -95,20 +94,14 @@ class OSMWaterManager:
                 ST_Transform(ST_Point({lon}, {lat}), 'EPSG:4326', 'EPSG:3857'), 
                 {radius_m}
             )
-            ORDER BY {OSMColumns.DIST} ASC
+            ORDER BY ST_Distance_Spheroid({OSMColumns.GEOM}, ST_Point({lon}, {lat})) ASC
         """
-        return self.con.execute(search_query).df()
 
+        ergebnisse = self.con.execute(search_query).df()
+        logger.info(f"{len(ergebnisse)} Wasserstellen gefunden")
+        return ergebnisse
 
-manager = OSMWaterManager("wasser_austria.db")
-manager.create_from_pbf("./austria-260325.osm.pbf")
-
-# Suche z.B. in Wien (Stephansplatz)
-ergebnisse = manager.find_nearby(lat=48.2084, lon=16.3731, radius_m=1000)
-
-# Anzeige mit deinen OSMColumns (Autocompletion-Safe)
-pd.set_option('display.max_rows', None)
-pd.set_option('display.max_columns', None)
-pd.set_option('display.width', None)
-pd.set_option('display.max_colwidth', None)
-print(ergebnisse[OSMColumns.ALL_LIST])
+#  Potentieller ablauf
+# manager = OSMWaterManager("wasser_austria.db")
+# manager.create_from_pbf("./austria-260325.osm.pbf") # Nur 1 mal runnen
+# ergebnisse = manager.find_nearby(lat=48.2084, lon=16.3731, radius_m=1000)
