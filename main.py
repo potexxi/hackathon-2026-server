@@ -3,7 +3,6 @@ from pydantic import BaseModel
 from typing import Optional
 import os
 import sys
-import json
 import logging
 import water_location_calculation
 
@@ -17,28 +16,29 @@ def get_relativ_path(path: str):
 
 log_dir = get_relativ_path("./Logs")
 os.makedirs(log_dir, exist_ok=True)
-os.makedirs(get_relativ_path("./Files"), exist_ok=True)
 
 log_formatter = logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
 
 root_logger = logging.getLogger()
 root_logger.setLevel(logging.INFO)
 
-main_file_handler = logging.FileHandler(os.path.join(log_dir, "app.log"), encoding='utf-8')
-main_file_handler.setFormatter(log_formatter)
-root_logger.addHandler(main_file_handler)
+if not root_logger.handlers:
+    main_file_handler = logging.FileHandler(os.path.join(log_dir, "app.log"), encoding='utf-8')
+    main_file_handler.setFormatter(log_formatter)
+    root_logger.addHandler(main_file_handler)
 
-console_handler = logging.StreamHandler(sys.stdout)
-console_handler.setFormatter(log_formatter)
-root_logger.addHandler(console_handler)
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setFormatter(log_formatter)
+    root_logger.addHandler(console_handler)
 
 osm_logger = logging.getLogger("water_location_calculation")
 osm_logger.setLevel(logging.INFO)
 
-osm_file_handler = logging.FileHandler(os.path.join(log_dir, "OSMLogs.log"), encoding='utf-8')
-osm_file_handler.setFormatter(log_formatter)
-osm_logger.addHandler(osm_file_handler)
-osm_logger.propagate = False
+if not osm_logger.handlers:
+    osm_file_handler = logging.FileHandler(os.path.join(log_dir, "OSMLogs.log"), encoding='utf-8')
+    osm_file_handler.setFormatter(log_formatter)
+    osm_logger.addHandler(osm_file_handler)
+    osm_logger.propagate = False
 
 logger = logging.getLogger(__name__)
 
@@ -84,13 +84,6 @@ def find_nearby_water(request: WaterRequest):
             logger.info("Spalte 'geom' entfernt (Bytearray Fix).")
 
         result_dict = result.to_dict(orient='records')
-
-        # Optional: auch lokal speichern
-        output_path = get_relativ_path("Files/output.json")
-        with open(output_path, 'w', encoding="utf-8") as f:
-            json.dump(result_dict, f, ensure_ascii=False, indent=4)
-        logger.info(f"✅ JSON gespeichert unter: {output_path}")
-
         return WaterResponse(found=True, count=len(result_dict), results=result_dict)
 
     except Exception as e:
