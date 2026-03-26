@@ -1,6 +1,7 @@
 import duckdb
 import pandas as pd
 from imports.types import OSMColumns
+import os
 
 # API: https://www.openstreetmap.org
 
@@ -14,7 +15,6 @@ wasser_filter = """
 """
 
 
-
 class OSMWaterManager:
     """Class for managing the water sources"""
     def __init__(self, db_path: str = "./austria.db"):
@@ -25,53 +25,90 @@ class OSMWaterManager:
         self.db_path = db_path
         self.con = None
 
-    def connect(self):
+    def _connect(self):
         """Connect to the database"""
         self.con = duckdb.connect(self.db_path)
         self.con.execute("INSTALL spatial; LOAD spatial;")
 
-    def create_from_pbf(self, pbf_path, force: bool = False):
-        pass
+    def create_from_pbf(self, pbf_path: str, force: bool = False):
+        """Erstellt die optimierte .db Datei mit deinem spezifischen Wasser-Filter."""
+        if os.path.exists(self.db_path) and not force:
+            print(f"--- Info: {self.db_path} existiert bereits. Überspringe Import. ---")
+            return
 
-def zeige_erste_wasserquellen(pbf_path: str, limit: int = 500) -> pd.DataFrame:
-    query = f"""
-        SELECT 
-            id,
-            lat,
-            lon,
-            COALESCE(CAST(tags['name'] AS VARCHAR), 'Unbekannte Quelle') as name,
-            CASE 
-                WHEN CAST(tags['amenity'] AS VARCHAR) = 'drinking_water' THEN 'Trinkwasserbrunnen'
-                WHEN CAST(tags['natural'] AS VARCHAR) = 'spring'         THEN 'Quelle'
-                WHEN CAST(tags['amenity'] AS VARCHAR) = 'water_point'    THEN 'Wasserentnahmestelle'
-                WHEN CAST(tags['man_made'] AS VARCHAR) = 'water_well'    THEN 'Brunnen'
-                WHEN CAST(tags['amenity'] AS VARCHAR) = 'fountain'       THEN 'Brunnen / Fontäne'
-                WHEN CAST(tags['amenity'] AS VARCHAR) = 'watering_place' THEN 'Tränke / Wanne'
-                WHEN CAST(tags['man_made'] AS VARCHAR) = 'water_tap'     THEN 'Wasserhahn'
-                WHEN CAST(tags['man_made'] AS VARCHAR) = 'pump'          THEN 'Pumpe'
-                ELSE 'Sonstige Wasserquelle'
-            END as wasser_typ,
-            CAST(tags['drinking_water'] AS VARCHAR) as ist_trinkwasser,
-            tags
-        FROM ST_ReadOSM('{pbf_path}')
-        WHERE 
-            CAST(tags['amenity'] AS VARCHAR) IN ('drinking_water', 'water_point', 'fountain', 'watering_place') OR
-            CAST(tags['natural'] AS VARCHAR) IN ('spring') OR
-            CAST(tags['man_made'] AS VARCHAR) IN ('water_well', 'water_tap', 'pump')
-        LIMIT {limit}
-    """
+        print(f"--- Starte Import von {pbf_path} ---")
+        # Verbindung für den Import öffnen
+        conn = duckdb.connect(self.db_path)
+        conn.execute("INSTALL spatial; LOAD spatial;")
 
-    df = con.execute(query).df()
+        # Wir nutzen deine CASE-Logik und Spaltennamen aus OSMColumns
+        # Wichtig: ST_Point(lon, lat) wird direkt für den Index erstellt
+        create_query = f"""
+            CREATE OR REPLACE TABLE wasserstellen AS 
+            SELECT 
+                id AS {OSMColumns.ID},
+                lat AS {OSMColumns.LAT},
+                lon AS {OSMColumns.LON},
+                COALESCE(CAST(tags['name'] AS VARCHAR), 'Unbekannte Quelle') as {OSMColumns.NAME},
+                CASE 
+                    WHEN CAST(tags['amenity'] AS VARCHAR) = 'drinking_water' THEN 'Trinkwasserbrunnen'
+                    WHEN CAST(tags['natural'] AS VARCHAR) = 'spring'         THEN 'Quelle'
+                    WHEN CAST(tags['amenity'] AS VARCHAR) = 'water_point'    THEN 'Wasserentnahmestelle'
+                    WHEN CAST(tags['man_made'] AS VARCHAR) = 'water_well'    THEN 'Brunnen'
+                    WHEN CAST(tags['amenity'] AS VARCHAR) = 'fountain'       THEN 'Brunnen / Fontäne'
+                    WHEN CAST(tags['amenity'] AS VARCHAR) = 'watering_place' THEN 'Tränke / Wanne'
+                    WHEN CAST(tags['man_made'] AS VARCHAR) = 'water_tap'     THEN 'Wasserhahn'
+                    WHEN CAST(tags['man_made'] AS VARCHAR) = 'pump'          THEN 'Pumpe'
+                    ELSE 'Sonstige Wasserquelle'
+                END as {OSMColumns.TYP},
+                CAST(tags['drinking_water'] AS VARCHAR) as {OSMColumns.TRINKBAR},
+                tags AS {OSMColumns.TAGS},
+                ST_Point(lon, lat) as {OSMColumns.GEOM}
+            FROM ST_ReadOSM('{pbf_path}')
+            WHERE 
+                CAST(tags['amenity'] AS VARCHAR) IN ('drinking_water', 'water_point', 'fountain', 'watering_place') OR
+                CAST(tags['natural'] AS VARCHAR) IN ('spring') OR
+                CAST(tags['man_made'] AS VARCHAR) IN ('water_well', 'water_tap', 'pump')
+        """
 
-    pd.set_option('display.max_rows', None)
-    pd.set_option('display.max_columns', None)
-    pd.set_option('display.width', None)
-    pd.set_option('display.max_colwidth', None)
+        conn.execute(create_query)
 
-    print(df[OSMColumns.LAT])
-    return df
+        print("--- Erstelle räumlichen Index ---")
+        conn.execute(f"CREATE INDEX IF NOT EXISTS spatial_idx ON wasserstellen USING RTREE ({OSMColumns.GEOM});")
+        conn.close()
+        print(f"--- Datenbank {self.db_path} erfolgreich erstellt! ---")
 
+    def find_nearby(self, lat: float, lon: float, radius_m: int = 5000) -> pd.DataFrame:
+        """Sucht im Umkreis und gibt ein DataFrame mit Distanz zurück."""
+        self._connect()
 
-# Ausführen
-zeige_erste_wasserquellen("./austria-260325.osm.pbf")
-input()
+        # Nutzt den R-Tree Index für maximale Geschwindigkeit
+        # ST_Distance_Spheroid berechnet die Entfernung in Metern auf der Erdkugel
+        search_query = f"""
+            SELECT 
+                {OSMColumns.ID}, 
+                {OSMColumns.NAME}, 
+                {OSMColumns.TYP}, 
+                {OSMColumns.TRINKBAR},
+                {OSMColumns.LAT}, 
+                {OSMColumns.LON},
+                round(ST_Distance_Spheroid({OSMColumns.GEOM}, ST_Point({lon}, {lat}))) as {OSMColumns.DIST}
+            FROM wasserstellen
+            WHERE ST_DWithin(
+                ST_Transform({OSMColumns.GEOM}, 'EPSG:4326', 'EPSG:3857'), 
+                ST_Transform(ST_Point({lon}, {lat}), 'EPSG:4326', 'EPSG:3857'), 
+                {radius_m}
+            )
+            ORDER BY {OSMColumns.DIST} ASC
+        """
+        return self.con.execute(search_query).df()
+
+manager = OSMWaterManager("wasser_austria.db")
+manager.create_from_pbf("./austria-260325.osm.pbf")
+
+# Suche z.B. in Wien (Stephansplatz)
+ergebnisse = manager.find_nearby(lat=48.2084, lon=16.3731, radius_m=1000)
+
+# Anzeige mit deinen OSMColumns (Autocompletion-Safe)
+pd.set_option('display.max_rows', None)
+print(ergebnisse[[OSMColumns.ALL]])
